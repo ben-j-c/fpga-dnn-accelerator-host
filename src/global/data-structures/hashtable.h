@@ -77,9 +77,9 @@ int64_t ht_arb_cmp_util(void *key1, void *key2, size_t size);
 /* Allocate an int -> user defined data hash table */
 #define ht_int_alloc(dst, value_size, value_copy, value_free)                                      \
 	ht_alloc(dst, ht_int_hash, ht_int_cmp, 0, NULL, NULL, value_size, value_copy, value_free)
-#define ht_int_set(ht, key, value) ht_set((ht), (void *) (uint64_t) (key), (void *) (value))
-#define ht_int_get(ht, key)        ht_get((ht), (void *) (uint64_t) (key))
-#define ht_int_delete(ht, key)     ht_delete(ht, (void *) (uint64_t) (key))
+#define ht_int_set(ht, key, value) ht_set((ht), (void *) (uint32_t) (key), (void *) (value))
+#define ht_int_get(ht, key)        ht_get((ht), (void *) (uint32_t) (key))
+#define ht_int_delete(ht, key)     ht_delete(ht, (void *) (uint32_t) (key))
 /* Allocate a string -> user defined data hash table. Copies via strdup */
 #define ht_str_alloc(dst, value_size, value_copy, value_free)                                      \
 	ht_alloc(dst,                                                                                  \

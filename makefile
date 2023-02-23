@@ -1,8 +1,9 @@
-CC=gcc
-INCLUDES= -I $(shell pwd)/src/global
+CC=arm-linux-gnueabihf-gcc
+# INCLUDES= -I $(shell pwd)/src/global -I$(SOCEDS_DEST_ROOT)/ip/altera/hps/altera_hps/hwlib/include/
+INCLUDES= -I $(shell pwd)/src/global -I/home/ben/Soft/intelFPGA/20.1/embedded/ip/altera/hps/altera_hps/hwlib/include/ -I/home/ben/Soft/intelFPGA/20.1/embedded/ip/altera/hps/altera_hps/hwlib/include/soc_cv_av/
 CFLAGS = -Werror -Wextra -Wall -MD
-LFLAGS = -lutil -ldl -lc -lbsd
-EXE_NAME = PROJECT_NAME
+LFLAGS = -lutil -ldl -lc -lbsd -static
+EXE_NAME = systolic
 EXE_NAME := ./bin/$(EXE_NAME)
 SRC := $(shell find src/ -type f -regex ".*\.c")
 OBJ = $(patsubst %.c,%.o,$(patsubst src/%,obj/%,$(SRC))) # src/main.c -> obj/main.c -> obj/main.o
@@ -12,7 +13,7 @@ TESTS_OUT := $(patsubst %.c,%.out,$(patsubst tests/%,obj_tests/%,$(TESTS)))
 RELEASE := 0
 DEBUG := 1
 ERROR_STACK_DISABLE := 0
-ERROR_STACK_BUFFER_BACKED := 0
+ERROR_STACK_BUFFER_BACKED := 1
 
 ifeq ($(RELEASE), 1)
 	DEBUG := 0

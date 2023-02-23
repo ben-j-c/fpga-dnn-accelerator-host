@@ -29,11 +29,13 @@ void es_print(void);
  *    - ERRNO: Format string should be errno and its strerror result
  */
 
+#define ES_BUFFER_BACKED 1
+
 #ifndef ES_NO_DEBUG
 /* Reset error stack, push message, and return with error value */
 #	define ES_NEW_INT(statement, fmt, args...)                                                    \
 		({                                                                                         \
-			int _st_value = (statement);                                                           \
+			int _st_value = (int) (statement);                                                     \
 			if ((_st_value) < 0) {                                                                 \
 				es_reset();                                                                        \
 				es_append("(%d (origin) @ %s:%d \"" fmt "\" )",                                    \
@@ -49,7 +51,7 @@ void es_print(void);
 /* push message, and return with error value*/
 #	define ES_FWD_INT(statement, fmt, args...)                                                    \
 		({                                                                                         \
-			int _st_value = (statement);                                                           \
+			int _st_value = (int) (statement);                                                     \
 			if ((_st_value) < 0) {                                                                 \
 				es_append("\n    (%d @ %s:%d \"" fmt "\" )",                                       \
 				          _st_value,                                                               \

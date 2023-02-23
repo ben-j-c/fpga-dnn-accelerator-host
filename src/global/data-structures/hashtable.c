@@ -46,6 +46,7 @@ static size_t _primes[] = {
     1073741789,
     2147483647,
     4294967291,
+#ifndef __ARM_32BIT_STATE
     8589934583,
     17179869143,
     34359738319,
@@ -77,6 +78,7 @@ static size_t _primes[] = {
     2305843009213693951,
     4611686018427387847,
     9223372036854775783,
+#endif
 };
 
 #if !(_XOPEN_SOURCE >= 500 || _POSIX_C_SOURCE >= 200809L || _BSD_SOURCE || _SVID_SOURCE)
@@ -407,10 +409,12 @@ double ht_density(ht_st *ht)
 
 size_t ht_int_hash(const void *key)
 {
-	uint64_t x = (uint64_t) key;
-	x          = (x ^ (x >> 31) ^ (x >> 62)) * UINT64_C(0x319642b2d24d8ec3);
-	x          = (x ^ (x >> 27) ^ (x >> 54)) * UINT64_C(0x96de1b173f119089);
-	x          = x ^ (x >> 30) ^ (x >> 60);
+	uint32_t x = (uint32_t) key;
+	x          = (x ^ 61) ^ (x >> 16);
+	x          = x + (x << 3);
+	x          = x ^ (x >> 4);
+	x          = x * 0x27d4eb2d;
+	x          = x ^ (x >> 15);
 	return x;
 }
 
