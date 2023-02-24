@@ -47,15 +47,15 @@ struct prog_state_s
 {
 	int fd_dev_mem;
 	void *virtual_base;
-	int32_t expected;
-	int32_t value;
+	int64_t expected;
+	int64_t value;
 
 	int32_t send_count;
 	int32_t recv_count;
 
-	volatile int32_t *fifo_to_copro_data;
+	volatile int64_t *fifo_to_copro_data;
 	volatile int32_t *fifo_to_copro_csr;
-	volatile int32_t *fifo_to_hps_data;
+	volatile int64_t *fifo_to_hps_data;
 	volatile int32_t *fifo_to_hps_csr;
 	volatile int32_t *pio_status;
 };
@@ -78,7 +78,7 @@ again:
 
 static int _recv(struct prog_state_s *s)
 {
-	int32_t data[FIFO_TO_HPS_OUT_CSR_FIFO_DEPTH];
+	int64_t data[FIFO_TO_HPS_OUT_CSR_FIFO_DEPTH];
 	int retval = 0;
 	if (!FIFO_IS_EMPTY(s->fifo_to_hps_csr)) {
 		int n  = FIFO_FILL_LEVEL(s->fifo_to_hps_csr);
@@ -129,8 +129,8 @@ static int _pipeline(UNUSED int argc, UNUSED char **argv)
 	state = (struct prog_state_s){
 	    .fd_dev_mem         = state.fd_dev_mem,
 	    .virtual_base       = state.virtual_base,
-	    .value              = (0x3C00 << 16) | (0x4248),
-	    .expected           = (0x4248),
+	    .value              = (0x3C00ll << 48) | (0x4248ll << 32) | (0x3C00ll << 16) | (0x4248ll),
+	    .expected           = (0x4248ll << 32) | (0x4248ll),
 	    .fifo_to_copro_data = (void *) (state.virtual_base + FIFO_TO_COPRO_IN_BASE),
 	    .fifo_to_copro_csr  = (void *) (state.virtual_base + FIFO_TO_COPRO_IN_CSR_BASE),
 	    .fifo_to_hps_data   = (void *) (state.virtual_base + FIFO_TO_HPS_OUT_BASE),
@@ -167,7 +167,7 @@ static int _pipeline(UNUSED int argc, UNUSED char **argv)
 	printf("Pipeline finished\n");
 	printf("b-a=%d\n", b - a);
 
-	double bandwidth = (95.0) * (N_TRANSFERS * 4 * 2) / (b - a);
+	double bandwidth = (95.0) * (N_TRANSFERS * 8 * 2) / (b - a);
 	printf("bandwidth = %f MBps\n", bandwidth);
 	return 0;
 }
