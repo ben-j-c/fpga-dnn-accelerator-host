@@ -38,7 +38,7 @@
 #define FIFO_IS_FULL(csr)    !!(*(csr + 1) & 0b000001)
 #define FIFO_IS_EMPTY(csr)   !!(*(csr + 1) & 0b000010)
 #define FIFO_FILL_LEVEL(csr) (*csr)
-#define FIFO_DEPTH           (128)
+#define FIFO_DEPTH           (256)
 
 #define N_TRANSFERS  (512 * 1024)
 #define VERIFY_VALUE 0
@@ -80,8 +80,8 @@ static int _recv(struct prog_state_s *s)
 {
 	int64_t data[FIFO_TO_HPS_OUT_CSR_FIFO_DEPTH];
 	int retval = 0;
-	if (!FIFO_IS_EMPTY(s->fifo_to_hps_csr)) {
-		int n  = FIFO_FILL_LEVEL(s->fifo_to_hps_csr);
+	int n      = FIFO_FILL_LEVEL(s->fifo_to_hps_csr);
+	if (n > 0) {
 		retval = 1;
 		for (int i = 0; i < n; i++) {
 			data[i] = *(s->fifo_to_hps_data);
@@ -102,8 +102,8 @@ static int _recv(struct prog_state_s *s)
 static int _send(struct prog_state_s *s)
 {
 	int retval = 0;
-	if (!FIFO_IS_FULL(s->fifo_to_copro_csr)) {
-		int n = FIFO_DEPTH - FIFO_FILL_LEVEL(s->fifo_to_copro_csr);
+	int n      = FIFO_DEPTH - FIFO_FILL_LEVEL(s->fifo_to_copro_csr);
+	if (n > 0) {
 		for (int i = 0; i < n; i++) {
 			*(s->fifo_to_copro_data) = s->value;
 		}

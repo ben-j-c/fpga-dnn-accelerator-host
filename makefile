@@ -10,8 +10,8 @@ OBJ = $(patsubst %.c,%.o,$(patsubst src/%,obj/%,$(SRC))) # src/main.c -> obj/mai
 TESTS := $(shell find tests/ -type f -regex ".*\.c")
 TESTS_OUT := $(patsubst %.c,%.out,$(patsubst tests/%,obj_tests/%,$(TESTS)))
 #Settings
-RELEASE := 0
-DEBUG := 1
+RELEASE := 1
+DEBUG := 0
 ERROR_STACK_DISABLE := 0
 ERROR_STACK_BUFFER_BACKED := 1
 

@@ -128,7 +128,7 @@ int ht_alloc(ht_st **dst,
              ht_alloc_func_t value_copy,
              ht_free_func_t value_free)
 {
-	CLEANUP(ht_free) ht_st *tmp;
+	CLEANUP(ht_free) ht_st *tmp = NULL;
 	ES_NEW_ASRT_NM(dst);
 	*dst = NULL;
 	ES_NEW_ASRT_NM(hash && cmp);
