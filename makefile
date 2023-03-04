@@ -5,10 +5,10 @@ CFLAGS = -Werror -Wextra -Wall -MD
 LFLAGS = -lutil -ldl -lc -lbsd -static
 EXE_NAME = systolic
 EXE_NAME := ./bin/$(EXE_NAME)
-SRC := $(shell find src/ -type f -regex ".*\.c")
+SRC := $(shell find src/ -type f -regex ".*\.c") # find all .c files in src
 OBJ = $(patsubst %.c,%.o,$(patsubst src/%,obj/%,$(SRC))) # src/main.c -> obj/main.c -> obj/main.o
-TESTS := $(shell find tests/ -type f -regex ".*\.c")
-TESTS_OUT := $(patsubst %.c,%.out,$(patsubst tests/%,obj_tests/%,$(TESTS)))
+TESTS := $(shell find tests/ -type f -regex ".*\.c")# find all .c files in tests
+TESTS_OUT := $(patsubst %.c,%.out,$(patsubst tests/%,obj_tests/%,$(TESTS)))# tests/some.c -> obj_test/some.out
 #Settings
 RELEASE := 1
 DEBUG := 0
@@ -81,5 +81,6 @@ clean:
 	-rm $(TESTS_OUT)
 	-rm -r obj_tests/
 
+# recompile on dependency changes
 -include $(OBJ:.o=.d)
 -include $(TEST_OUT: .out=.d)
