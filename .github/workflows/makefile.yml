@@ -14,8 +14,8 @@ jobs:
     steps:
     - uses: actions/checkout@v3
     
-    - name: Install libbsd
-      run: sudo apt install -y libbsd-dev
+    - name: Install libbsd and arm-gcc
+      run: sudo apt install -y libbsd-dev gcc-arm*
       
     - name: Build executable
       run: make executable
