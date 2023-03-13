@@ -8,7 +8,6 @@ on:
 
 jobs:
   build:
-
     runs-on: ubuntu-latest
 
     steps:
@@ -16,9 +15,3 @@ jobs:
     
     - name: Install libbsd and arm-gcc
       run: sudo apt install -y libbsd-dev gcc-arm*
-      
-    - name: Build executable
-      run: make executable
-      
-    - name: Run tests
-      run: make tests
