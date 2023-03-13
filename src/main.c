@@ -26,19 +26,15 @@
 #include "socal/socal.h"
 #include "util.h"
 
+// Cyclone V Hard Processor System Technical Reference Manual, Table 2-2
 #define HPS2FPGA_BASE (0xC0000000)
-//#define HPS2FPGA_BASE (0xFF200000)
+// Size of 2 MiB, can be as much as 960 MiB
 #define HPS2FPGA_SPAN (0x00200000)
-
+// Cyclone V Hard Processor System Technical Reference Manual, Table 2-3
 #define SDRAMCSR_BASE (0xFFC20000)
+// Cyclone V Hard Processor System Technical Reference Manual, Table 2-3
 #define SDRAMCSR_SPAN (0x000E0000)
-/*
-#define HPS2FPGA_SPAN (0x00200000)
 
-#define HW_REGS_BASE (ALT_STM_OFST)
-#define HW_REGS_SPAN (0x04000000)
-#define HW_REGS_MASK (HW_REGS_SPAN - 1)
-*/
 #define FIFO_IS_FULL(csr)    !!(*(csr + 1) & 0b000001)
 #define FIFO_IS_EMPTY(csr)   !!(*(csr + 1) & 0b000010)
 #define FIFO_FILL_LEVEL(csr) (*csr)
@@ -162,22 +158,16 @@ static int _pipeline(UNUSED int argc, UNUSED char **argv)
 	};
 	// Test pattern
 	printf("Writing test pattern\n");
-	uint8_t *buf = malloc(N_BYTES);
 	uint32_t sum = 0;
 	for (uint32_t i = 0; i < N_BYTES; i++) {
-		// uint8_t *dst = (uint8_t *) (state.udmabuf.virtual_base + i);
-		//*dst         = ((i % 16) << 4) | (i % 16);
-		buf[i] = ((i % 16) << 4) | (i % 16);
+		uint8_t *dst = (uint8_t *) (state.udmabuf.virtual_base + i);
+		*dst         = ((i % 16) << 4) | (i % 16);
 	}
 	for (int i = 0; i < N_BYTES / 4; i++) {
-		sum += *(uint32_t *) (buf + i * 4);
+		sum += *(uint32_t *) (state.udmabuf.virtual_base + i * 4);
 	}
 	printf("sum=%08x\n", sum);
 	printf("Done writing test pattern\n");
-	printf("Calling write\n");
-	ES_NEW_INT_ERRNO(write(state.udmabuf.fd, buf, N_BYTES));
-	free(buf);
-	printf("Done calling write\n");
 	printf("Calling sync\n");
 	ES_FWD_INT_NM(mu_udmabuf_sync_for_device(&state.udmabuf, 0, state.udmabuf.size));
 	printf("Done calling sync\n");
@@ -192,7 +182,9 @@ static int _pipeline(UNUSED int argc, UNUSED char **argv)
 		printf("Recv'd %016llx\n", a);
 		b = _RECV(state);
 		printf("Recv'd %016llx\n", b);
-		printf("checksum=0x%08x\n", (uint32_t) (b >> 32) + sum);
+		printf("checksum=0x%08x (%s)\n",
+		       (uint32_t) (b >> 32) + sum,
+		       (uint32_t) (b >> 32) + sum == 0 ? "good" : "bad");
 	}
 	printf("Done reading\n");
 	printf("send_n=%u\n", *state.fifo_to_copro_csr);

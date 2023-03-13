@@ -1,6 +1,7 @@
 CC=arm-linux-gnueabihf-gcc
-# INCLUDES= -I $(shell pwd)/src/global -I$(SOCEDS_DEST_ROOT)/ip/altera/hps/altera_hps/hwlib/include/
-INCLUDES= -I $(shell pwd)/src/global -I/home/ben/Soft/intelFPGA/20.1/embedded/ip/altera/hps/altera_hps/hwlib/include/ -I/home/ben/Soft/intelFPGA/20.1/embedded/ip/altera/hps/altera_hps/hwlib/include/soc_cv_av/
+INCLUDES= -I $(shell pwd)/src/global
+INCLUDES+= -I$(SOCEDS_DEST_ROOT)/ip/altera/hps/altera_hps/hwlib/include/
+INCLUDES+= -I$(SOCEDS_DEST_ROOT)/ip/altera/hps/altera_hps/hwlib/include/soc_cv_av/
 CFLAGS = -Werror -Wextra -Wall -MD
 LFLAGS = -lutil -ldl -lc -lbsd -static
 EXE_NAME = systolic

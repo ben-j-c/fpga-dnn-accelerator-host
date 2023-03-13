@@ -156,14 +156,14 @@ int _write_sync_for(int id, const char *attr_name, uint32_t upper, uint32_t lowe
 
 int _mmap_udmabuf(udmabuf_t *src_dst, int id)
 {
-	// uint32_t size = src_dst->size;
+	uint32_t size = src_dst->size;
 	char file_name[64];
 	CLEAN_FD int fd = -1;
 	ES_NEW_INT_NM(snprintf(file_name, sizeof(file_name), "/dev/udmabuf%d", id));
 	ES_NEW_INT_ERRNO(fd = open(file_name, O_RDWR));
-	src_dst->fd = fd;
-	// src_dst->virtual_base = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-	// ES_NEW_ASRT_ERRNO((int) src_dst->virtual_base > 0);
+	src_dst->fd           = fd;
+	src_dst->virtual_base = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+	ES_NEW_ASRT_ERRNO((int) src_dst->virtual_base > 0);
 	fd = -1;
 	return 0;
 }

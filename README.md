@@ -1,63 +1,22 @@
 # Purpose
-The purpose of this project is to provide the base set of useful tools when
-create a new C project on Linux.
+The purpose of this project is to provide the host code for a hardware accelerator. The accelerator is implemented in the FPGA fabric on a Cyclone V SoC. Particularly, this is intended to run on the DE1-SoC board. Currently this project performs some benchmarks on interface bandwidth.
 
 # Features
-- No makefile modifications necessary for new .c/.h files and folders
-  - Dependencies checked for incremental compilation
-  - Project wide include directory available in `src/global`
-- Automated testing framework through makefile
-  - Just add a new `.c` file in `tests`
-  - Run `make tests` to run tests
-- Error handling boiler-plate
-  - `FWD` for pushing additional errors to the existing error chain
-  - `NEW` for creating a new error chain
-- Argument parsing boiler-plate
-  - Powered by GNU Argp
-  - Example given with easy to start structure
-- Multiple datastructures (all compatible with error handling boiler-plate)
-  - Hashtable
-    - Existing macros for string and int typed keys
-      - Predefined hashing functions
-      - Easy to use
-    - User controllable data ownership (hash table can allocate data, move data, free data, or do nothing depending on settings used)
-  - Vector
-    - Contiguous data segment
-    - Support for `push_back`, `emplace_back`, and `take_data` (for freeing all but the underlying data array)
-  - Doubly linked list
-    - Infallible add/remove/init
-    - Ergonomic iterator
-  - AVL tree
-    - Infallible add/remove/find
-    - Ergonomic iterator
-- Clang format present
-- Tested on GCC 9.4.0
-- ANSI flag compatible
-- Multi-threaded epoll
-
+- WIP
+- SDRAM bandwidth in excess of 2.5 MBps
 # Future Features
-- Shared memory tools
-- Memory backed files tools
-- IPC tools
-- More tests
-
+- TensorFlowLite compatability
 # How To Use
 
-1. Clone the repo to your **`new-project`** directory
+## SoC Board
+1. Install [udmabuf](https://github.com/ikwzm/udmabuf) on your SoC board 
+2. Configure your SoC board to initialize the SDRAM controller (various options)
+   - For the DE1-SoC you need to copy your .rbf file to `/media/fat_partition/soc_system.rbf`. On startup the boot loader (U-Boot iirc) will automatically configure the SDRAM controller according to the FPGA image (number of activated ports, AXI vs Avalon MM). `MSEL=0b00000` so the image is loaded on HPS reset (this works for me but there are other issues I have, maybe I have some wonky configuration that I haven't looked at yet).
+## Development Environment
+1. Install `libbsd-dev` for `bsd/string.h` and `gcc-arm*` for `arm-linux-gnueabihf-gcc`.
 ```
-git clone git@github.com:ben-j-c/linux-systems-project-base ./new-project
+sudo apt install -y libbsd-dev gcc-arm*
 ```
-2. Rename the project in the Makefile
-```
-EXE_NAME = PROJECT_NAME
-```
-3. Set the origin url to your repo
-```
-git remote set-url origin git@github.com:your-username/your-repo
-git push
-```
-4. Install `libbsd-dev` for `bsd/string.h`
-```
-sudo apt install libbsd-dev
-```
-5. Run `make executable`, `make tests`, or `make all` to build the project executalbe, run the tests, or do both. To build with optimizations and without debug symbols use `make ... RELEASE=1`
+1. Enter your SoC EDS environment shell.
+2. Run `make executable`, to build the project executable. This can be moved to the SoC to be
+   to be run.
