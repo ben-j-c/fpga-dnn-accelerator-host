@@ -86,7 +86,8 @@ void *mu_alloc(int n_pages)
 	return valloc(n_pages * sysconf(_SC_PAGE_SIZE));
 }
 
-static enum attr_format {
+enum attr_format
+{
 	ATTR_FORMAT_INT,
 	ATTR_FORMAT_HEX,
 };
@@ -155,13 +156,15 @@ int _write_sync_for(int id, const char *attr_name, uint32_t upper, uint32_t lowe
 
 int _mmap_udmabuf(udmabuf_t *src_dst, int id)
 {
-	uint32_t size = src_dst->size;
+	// uint32_t size = src_dst->size;
 	char file_name[64];
-	int fd;
+	CLEAN_FD int fd = -1;
 	ES_NEW_INT_NM(snprintf(file_name, sizeof(file_name), "/dev/udmabuf%d", id));
 	ES_NEW_INT_ERRNO(fd = open(file_name, O_RDWR));
-	ES_NEW_INT_ERRNO(src_dst->virtual_base =
-	                     mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0));
+	src_dst->fd = fd;
+	// src_dst->virtual_base = mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+	// ES_NEW_ASRT_ERRNO((int) src_dst->virtual_base > 0);
+	fd = -1;
 	return 0;
 }
 
@@ -211,4 +214,39 @@ void cleanup_udmabuf(udmabuf_t *to_clean)
 	if (to_clean->fd >= 0) {
 		close(to_clean->fd);
 	}
+}
+
+#define _SDRAM_CSR_PRINTF(sig) printf("%30s: 0x%08X\n", #sig, *(volatile uint32_t *) (src + sig))
+
+void mu_sdram_csr_print(volatile void *src)
+{
+	_SDRAM_CSR_PRINTF(MU_SDRAM_CSR_CTRLCFG);
+	_SDRAM_CSR_PRINTF(MU_SDRAM_CSR_DRAMTIMING1);
+	_SDRAM_CSR_PRINTF(MU_SDRAM_CSR_DRAMTIMING2);
+	_SDRAM_CSR_PRINTF(MU_SDRAM_CSR_DRAMTIMING3);
+	_SDRAM_CSR_PRINTF(MU_SDRAM_CSR_DRAMTIMING4);
+	_SDRAM_CSR_PRINTF(MU_SDRAM_CSR_LOWPWRTIMING);
+	_SDRAM_CSR_PRINTF(MU_SDRAM_CSR_DRAMODT);
+	_SDRAM_CSR_PRINTF(MU_SDRAM_CSR_DRAMADDRW);
+	_SDRAM_CSR_PRINTF(MU_SDRAM_CSR_DRAMIFWIDTH);
+	_SDRAM_CSR_PRINTF(MU_SDRAM_CSR_DRAMSTS);
+	_SDRAM_CSR_PRINTF(MU_SDRAM_CSR_DRAMINTR);
+	_SDRAM_CSR_PRINTF(MU_SDRAM_CSR_SBECOUNT);
+	_SDRAM_CSR_PRINTF(MU_SDRAM_CSR_DBECOUNT);
+	_SDRAM_CSR_PRINTF(MU_SDRAM_CSR_ERRADDR);
+	_SDRAM_CSR_PRINTF(MU_SDRAM_CSR_DROPCOUNT);
+	_SDRAM_CSR_PRINTF(MU_SDRAM_CSR_DROPADDR);
+	_SDRAM_CSR_PRINTF(MU_SDRAM_CSR_LOWPWREQ);
+	_SDRAM_CSR_PRINTF(MU_SDRAM_CSR_LOWPWRACK);
+	_SDRAM_CSR_PRINTF(MU_SDRAM_CSR_STATICCFG);
+	_SDRAM_CSR_PRINTF(MU_SDRAM_CSR_CTRLWIDTH);
+	_SDRAM_CSR_PRINTF(MU_SDRAM_CSR_PORTCFG);
+	_SDRAM_CSR_PRINTF(MU_SDRAM_CSR_FPGAPORTRST);
+	_SDRAM_CSR_PRINTF(MU_SDRAM_CSR_PROTPORTDEFAULT);
+	_SDRAM_CSR_PRINTF(MU_SDRAM_CSR_PROTRULEADDR);
+	_SDRAM_CSR_PRINTF(MU_SDRAM_CSR_PROTRULEID);
+	_SDRAM_CSR_PRINTF(MU_SDRAM_CSR_PROTRULEDATA);
+	_SDRAM_CSR_PRINTF(MU_SDRAM_CSR_PROTRULERDWR);
+	_SDRAM_CSR_PRINTF(MU_SDRAM_CSR_MPPRIORITY);
+	_SDRAM_CSR_PRINTF(MU_SDRAM_CSR_REMAPPRIORITY);
 }

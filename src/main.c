@@ -10,6 +10,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <hps.h>
+#include <sched.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -29,6 +30,8 @@
 //#define HPS2FPGA_BASE (0xFF200000)
 #define HPS2FPGA_SPAN (0x00200000)
 
+#define SDRAMCSR_BASE (0xFFC20000)
+#define SDRAMCSR_SPAN (0x000E0000)
 /*
 #define HPS2FPGA_SPAN (0x00200000)
 
@@ -41,17 +44,19 @@
 #define FIFO_FILL_LEVEL(csr) (*csr)
 #define FIFO_DEPTH           (256)
 
-#define N_TRANSFERS (512 * 1024)
-//#define N_BYTES (N_TRANSFERS * 8 * 2)
-#define N_BYTES      (4096 * 2048)
+// 64 MiB
+#define N_BYTES      (32 * (1 << 20))
 #define VERIFY_VALUE 0
 
 struct prog_state_s
 {
 	int fd_dev_mem;
 	void *virtual_base;
-	uint32_t phy_dma_addr[N_BYTES / 4096];
-	void *virt_dma_addr;
+
+	int fd_sdramcsr;
+	void *sdramcsr_base;
+
+	udmabuf_t udmabuf;
 
 	int32_t send_count;
 	int32_t recv_count;
@@ -63,12 +68,8 @@ struct prog_state_s
 	volatile int32_t *pio_status;
 };
 
-static void _state_cleanup(UNUSED struct prog_state_s *state)
+static void _state_cleanup(struct prog_state_s *state)
 {
-	if (state->virt_dma_addr) {
-		munlock(state->virt_dma_addr, N_BYTES);
-		free(state->virt_dma_addr);
-	}
 	if (state->virtual_base) {
 		munmap(state->virtual_base, HPS2FPGA_SPAN);
 		state->virtual_base = NULL;
@@ -81,53 +82,52 @@ again:
 		}
 		state->fd_dev_mem = -1;
 	}
+	cleanup_udmabuf(&state->udmabuf);
 }
-/*
+
 static int _recv(uint64_t *dst, struct prog_state_s *s)
 {
-    int retval = 0;
-    int n      = FIFO_FILL_LEVEL(s->fifo_to_hps_csr);
-    if (n > 0) {
-        *dst   = *(s->fifo_to_hps_data);
-        retval = 1;
-        s->recv_count += 1;
-    }
-    return retval;
+	int retval = 0;
+	int n      = FIFO_FILL_LEVEL(s->fifo_to_hps_csr);
+	if (n > 0) {
+		*dst   = *(s->fifo_to_hps_data);
+		retval = 1;
+		s->recv_count += 1;
+	}
+	return retval;
 }
 
 static int _send(struct prog_state_s *s, uint64_t data)
 {
-    int retval = 0;
-    int n      = FIFO_DEPTH - FIFO_FILL_LEVEL(s->fifo_to_copro_csr);
-    if (n > 0) {
-        *(s->fifo_to_copro_data) = data;
-        retval                   = 1;
-        s->send_count += 1;
-    }
-    return retval;
-}
-*/
-
-static int _allocate_buffer(struct prog_state_s *state)
-{
-	int n_pages = N_BYTES / sysconf(_SC_PAGE_SIZE);
-	ES_NEW_ASRT_NM(state->virt_dma_addr = mu_alloc(n_pages));
-	memset(state->virt_dma_addr, 0, N_BYTES);
-	ES_NEW_INT_ERRNO(mlock(state->virt_dma_addr, N_BYTES));
-	for (int i = 0; i < n_pages; i++) {
-		uint64_t phys_addr;
-		ES_FWD_ASRT_NM(
-		    mu_virt_to_phys(&phys_addr, state->virt_dma_addr + i * sysconf(_SC_PAGE_SIZE)));
-		state->phy_dma_addr[i] = (uint32_t) phys_addr;
+	int retval = 0;
+	int n      = FIFO_DEPTH - FIFO_FILL_LEVEL(s->fifo_to_copro_csr);
+	if (n > 0) {
+		*(s->fifo_to_copro_data) = data;
+		retval                   = 1;
+		s->send_count += 1;
 	}
-	return 0;
+	return retval;
 }
+
+#define _RECV(state)                                                                               \
+	({                                                                                             \
+		uint64_t _recv_val;                                                                        \
+		while (_recv(&_recv_val, &state) == 0)                                                     \
+			sched_yield();                                                                         \
+		_recv_val;                                                                                 \
+	})
+
+#define _SEND(state, value)                                                                        \
+	({                                                                                             \
+		uint64_t _send_val = value;                                                                \
+		while (_send(&state, _send_val) == 0)                                                      \
+			sched_yield();                                                                         \
+	})
 
 static int _pipeline(UNUSED int argc, UNUSED char **argv)
 {
 	puts("starting pipeline");
 	CLEANUP(_state_cleanup) struct prog_state_s state = {};
-	ES_FWD_INT_NM(_allocate_buffer(&state));
 	ES_NEW_INT_ERRNO(state.fd_dev_mem = open("/dev/mem", (O_RDWR | O_SYNC)));
 	ES_NEW_ASRT_ERRNO((state.virtual_base = mmap(NULL,
 	                                             HPS2FPGA_SPAN,
@@ -135,37 +135,75 @@ static int _pipeline(UNUSED int argc, UNUSED char **argv)
 	                                             MAP_SHARED,
 	                                             state.fd_dev_mem,
 	                                             HPS2FPGA_BASE)) != MAP_FAILED);
+	ES_NEW_INT_ERRNO(state.fd_sdramcsr = open("/dev/mem", (O_RDWR | O_SYNC)));
+	ES_NEW_ASRT_ERRNO((state.sdramcsr_base = mmap(NULL,
+	                                              SDRAMCSR_SPAN,
+	                                              PROT_READ | PROT_WRITE,
+	                                              MAP_SHARED,
+	                                              state.fd_dev_mem,
+	                                              SDRAMCSR_BASE)) != MAP_FAILED);
+	ES_FWD_INT(mu_get_udmabuf(&state.udmabuf, 0), "Failed to get udmabuf0");
+
+	{
+		*(volatile uint32_t *) (state.sdramcsr_base + MU_SDRAM_CSR_FPGAPORTRST) = 0x3FFF;
+	}
 
 	state = (struct prog_state_s){
 	    .fd_dev_mem         = state.fd_dev_mem,
 	    .virtual_base       = state.virtual_base,
-	    .virt_dma_addr      = state.virt_dma_addr,
-	    .phy_dma_addr       = state.phy_dma_addr,
+	    .udmabuf            = state.udmabuf,
+	    .fd_sdramcsr        = state.fd_sdramcsr,
+	    .sdramcsr_base      = state.sdramcsr_base,
 	    .fifo_to_copro_data = (void *) (state.virtual_base + FIFO_TO_COPRO_IN_BASE),
 	    .fifo_to_copro_csr  = (void *) (state.virtual_base + FIFO_TO_COPRO_IN_CSR_BASE),
 	    .fifo_to_hps_data   = (void *) (state.virtual_base + FIFO_TO_HPS_OUT_BASE),
 	    .fifo_to_hps_csr    = (void *) (state.virtual_base + FIFO_TO_HPS_OUT_CSR_BASE),
 	    .pio_status         = (void *) (state.virtual_base + PIO_0_BASE),
 	};
-	printf("virtual_base=%X\n", (unsigned int) state.virtual_base);
-	printf("fd_dev_mem=%d\n", state.fd_dev_mem);
-	int a = *state.pio_status;
-	{
-		/*uint64_t msg;
-		_send(&state, ((uint64_t) N_BYTES << 32) | state.phy_dma_addr);
-		while (_recv(&msg, &state) == 0)
-		    ;
-		ES_NEW_ASRT(msg == N_BYTES * 3, "Unexpected value from FPGA");*/
+	// Test pattern
+	printf("Writing test pattern\n");
+	uint8_t *buf = malloc(N_BYTES);
+	uint32_t sum = 0;
+	for (uint32_t i = 0; i < N_BYTES; i++) {
+		// uint8_t *dst = (uint8_t *) (state.udmabuf.virtual_base + i);
+		//*dst         = ((i % 16) << 4) | (i % 16);
+		buf[i] = ((i % 16) << 4) | (i % 16);
 	}
-	int b = *state.pio_status;
+	for (int i = 0; i < N_BYTES / 4; i++) {
+		sum += *(uint32_t *) (buf + i * 4);
+	}
+	printf("sum=%08x\n", sum);
+	printf("Done writing test pattern\n");
+	printf("Calling write\n");
+	ES_NEW_INT_ERRNO(write(state.udmabuf.fd, buf, N_BYTES));
+	free(buf);
+	printf("Done calling write\n");
+	printf("Calling sync\n");
+	ES_FWD_INT_NM(mu_udmabuf_sync_for_device(&state.udmabuf, 0, state.udmabuf.size));
+	printf("Done calling sync\n");
+	printf("send_n=%u\n", *state.fifo_to_copro_csr);
+	printf("recv_n=%u\n", *state.fifo_to_hps_csr);
+	uint64_t a, b;
+	{
+		_SEND(state, 0);
+		_SEND(state, ((uint64_t) N_BYTES << 32 | state.udmabuf.phys_addr));
+		printf("Sent addr and len\n");
+		a = _RECV(state);
+		printf("Recv'd %016llx\n", a);
+		b = _RECV(state);
+		printf("Recv'd %016llx\n", b);
+		printf("checksum=0x%08x\n", (uint32_t) (b >> 32) + sum);
+	}
 	printf("Done reading\n");
+	printf("send_n=%u\n", *state.fifo_to_copro_csr);
+	printf("recv_n=%u\n", *state.fifo_to_hps_csr);
 
-	double bandwidth = (95.0) * (N_BYTES) / (b - a);
+	double bandwidth = (95.0) * N_BYTES / ((b & 0xFFFFFFFF) - (a & 0xFFFFFFFF));
 	printf("bandwidth = %f MBps\n", bandwidth);
 	return 0;
 }
 
-int main(UNUSED int argc, UNUSED char **argv)
+int main(int argc, char **argv)
 {
 	int retval = -1;
 	/* Execute program */
