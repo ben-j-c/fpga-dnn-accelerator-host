@@ -72,6 +72,8 @@
 #	define WARN_UNUSED __attribute_warn_unused_result__
 #endif
 
+#define STATIC_ASSERT(x, message) _Static_assert(x, message)
+
 typedef struct big_buff_s
 {
 	char str[BIG_BUF_SZ];

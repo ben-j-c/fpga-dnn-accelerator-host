@@ -38,30 +38,42 @@
 #define FIFO_IS_FULL(csr)    !!(*(csr + 1) & 0b000001)
 #define FIFO_IS_EMPTY(csr)   !!(*(csr + 1) & 0b000010)
 #define FIFO_FILL_LEVEL(csr) (*csr)
-#define FIFO_DEPTH           (256)
 
-// 64 MiB
-#define N_BYTES      (32 * (1 << 20))
-#define VERIFY_VALUE 0
+STATIC_ASSERT(MSGDMA_READ_CSR_ENHANCED_FEATURES, "Require enhanced features");
+
+#pragma pack(push, 1)
+typedef struct matrix_intrinsic_s
+{
+	uint8_t data[16][16];
+} matrix_t;
+#pragma pack(pop)
 
 struct prog_state_s
 {
 	int fd_dev_mem;
 	void *virtual_base;
 
-	int fd_sdramcsr;
-	void *sdramcsr_base;
-
 	udmabuf_t udmabuf;
 
 	int32_t send_count;
 	int32_t recv_count;
 
-	volatile int64_t *fifo_to_copro_data;
-	volatile int32_t *fifo_to_copro_csr;
-	volatile int64_t *fifo_to_hps_data;
-	volatile int32_t *fifo_to_hps_csr;
+	volatile uint64_t *fifo_instr;
+	volatile int32_t *fifo_instr_csr;
 	volatile int32_t *pio_status;
+	volatile uint32_t *systolic_csr;
+
+	struct
+	{
+		volatile uint32_t *csr;
+		volatile uint32_t *descriptor;
+	} read_dma;
+
+	struct
+	{
+		volatile uint32_t *csr;
+		volatile uint64_t *descriptor;
+	} write_dma;
 };
 
 static void _state_cleanup(struct prog_state_s *state)
@@ -81,49 +93,119 @@ again:
 	cleanup_udmabuf(&state->udmabuf);
 }
 
-static int _recv(uint64_t *dst, struct prog_state_s *s)
+void print_state(struct prog_state_s *s)
 {
-	int retval = 0;
-	int n      = FIFO_FILL_LEVEL(s->fifo_to_hps_csr);
-	if (n > 0) {
-		*dst   = *(s->fifo_to_hps_data);
-		retval = 1;
-		s->recv_count += 1;
-	}
-	return retval;
+	printf("sys_state: 0x%08x\n", *(s->systolic_csr));
+	printf("sys_n_col: 0x%08x\n", *(s->systolic_csr + 1));
+	printf("sys_n_row: 0x%08x\n", *(s->systolic_csr + 2));
+	printf("sys_cycle: 0x%08x\n", *(s->systolic_csr + 3));
+	printf("sys_stream: 0x%08x\n", *(s->systolic_csr + 4));
+	printf("sys_c0: 0x%08x\n", *(s->systolic_csr + 5));
+	printf("sys_c1: 0x%08x\n", *(s->systolic_csr + 6));
+	printf("sys_c2: 0x%08x\n", *(s->systolic_csr + 7));
+	printf("sys_c3: 0x%08x\n", *(s->systolic_csr + 8));
+	printf("sys_c4: 0x%08x\n", *(s->systolic_csr + 9));
+	printf("sys_c5: 0x%08x\n", *(s->systolic_csr + 10));
+	printf("sys_c6: 0x%08x\n", *(s->systolic_csr + 11));
+	printf("sys_c7: 0x%08x\n", *(s->systolic_csr + 12));
+	printf("wr_status: 0x%08x\n", *(s->write_dma.csr));
+	printf("wr_fill: 0x%08x\n", *(s->write_dma.csr + 2));
+	printf("rd_status: 0x%08x\n", *(s->read_dma.csr));
+	printf("rd_fill: 0x%08x\n\n", *(s->read_dma.csr + 2));
 }
 
-static int _send(struct prog_state_s *s, uint64_t data)
+static int _send_instr(struct prog_state_s *s, uint64_t data)
 {
 	int retval = 0;
-	int n      = FIFO_DEPTH - FIFO_FILL_LEVEL(s->fifo_to_copro_csr);
+	int n      = FIFO_INSTR_IN_CSR_FIFO_DEPTH - FIFO_FILL_LEVEL(s->fifo_instr_csr);
 	if (n > 0) {
-		*(s->fifo_to_copro_data) = data;
-		retval                   = 1;
+		*(s->fifo_instr) = data;
+		retval           = 1;
 		s->send_count += 1;
 	}
 	return retval;
 }
 
-#define _RECV(state)                                                                               \
+#define _SEND_INSTR(state, n_rows, n_cols)                                                         \
 	({                                                                                             \
-		uint64_t _recv_val;                                                                        \
-		while (_recv(&_recv_val, &state) == 0)                                                     \
-			sched_yield();                                                                         \
-		_recv_val;                                                                                 \
-	})
-
-#define _SEND(state, value)                                                                        \
-	({                                                                                             \
-		uint64_t _send_val = value;                                                                \
-		while (_send(&state, _send_val) == 0)                                                      \
+		uint64_t _send_val = (n_cols & 0b111111) | ((n_rows & 0b111111) << 6);                     \
+		while (_send_instr(state, _send_val) == 0)                                                 \
 			sched_yield();                                                                         \
 	})
 
-static int _pipeline(UNUSED int argc, UNUSED char **argv)
+static int _send_read(struct prog_state_s *s,
+                      uint32_t phys_addr,
+                      uint32_t n_bytes,
+                      uint32_t channel)
+{
+	// ES_NEW_ASRT((phys_addr & 0x1F) == 0, "physical address must be 32 byte aligned");
+	// ES_NEW_ASRT((n_bytes & 0x1F) == 0, "length must be in 32 byte increments");
+	//  Use largest burst supported by the IP, else downscale by powers of 2 (only valid options)
+	uint32_t burst = 8;
+	while (burst > n_bytes) {
+		burst = burst >> 1;
+	}
+	*s->read_dma.descriptor       = phys_addr;
+	*(s->read_dma.descriptor + 2) = n_bytes;
+	*(s->read_dma.descriptor + 3) = (burst << 16);
+	// Go bit and early done enable
+	*(s->read_dma.descriptor + 7) = (1u << 31) | (1u << 24) | (channel & 0xFF);
+	return 0;
+}
+
+static int _send_write(struct prog_state_s *s, uint32_t phys_addr)
+{
+	// ES_NEW_ASRT((phys_addr & 0x1F) == 0, "physical address must be 32 byte aligned");
+	// ES_NEW_ASRT((n_bytes & 0x1F) == 0, "length must be in 32 byte increments");
+	*(s->write_dma.descriptor) = phys_addr;
+	return 0;
+}
+
+/**
+ * @brief Perform a matrix multiplication with FPGA hardware
+ *
+ * @param s program state handle for hardware
+ * @param dst column-major order
+ * @param left_src column-major order
+ * @param right_src row-major order
+ */
+void matrix_mult16(struct prog_state_s *s, matrix_t *dst, matrix_t *left_src, matrix_t *right_src)
+{
+	_send_read(s, (uint32_t) left_src, sizeof(matrix_t), 1);
+	printf("send read1\n");
+	_send_read(s, (uint32_t) right_src, sizeof(matrix_t), 0);
+	printf("send read2\n");
+	_send_write(s, (uint32_t) dst);
+	printf("send write\n");
+	_SEND_INSTR(s, 16, 16);
+	printf("send instr\n");
+
+	while (({
+		uint32_t status = *(s->write_dma.csr);
+		status;
+	})) {
+		sched_yield();
+	}
+	return;
+}
+
+void _print_mat(matrix_t *src, bool col_major)
+{
+	for (int i = 0; i < 16; i++) {
+		for (int j = 0; j < 16; j++) {
+			int v = col_major ? src->data[j][i] : src->data[i][j];
+			printf("%02x ", v);
+		}
+		printf("\n");
+	}
+}
+
+static int _pipeline(int argc, char **argv)
 {
 	puts("starting pipeline");
 	CLEANUP(_state_cleanup) struct prog_state_s state = {};
+	volatile void *sdramcsr_base;
+
 	ES_NEW_INT_ERRNO(state.fd_dev_mem = open("/dev/mem", (O_RDWR | O_SYNC)));
 	ES_NEW_ASRT_ERRNO((state.virtual_base = mmap(NULL,
 	                                             HPS2FPGA_SPAN,
@@ -131,67 +213,111 @@ static int _pipeline(UNUSED int argc, UNUSED char **argv)
 	                                             MAP_SHARED,
 	                                             state.fd_dev_mem,
 	                                             HPS2FPGA_BASE)) != MAP_FAILED);
-	ES_NEW_INT_ERRNO(state.fd_sdramcsr = open("/dev/mem", (O_RDWR | O_SYNC)));
-	ES_NEW_ASRT_ERRNO((state.sdramcsr_base = mmap(NULL,
-	                                              SDRAMCSR_SPAN,
-	                                              PROT_READ | PROT_WRITE,
-	                                              MAP_SHARED,
-	                                              state.fd_dev_mem,
-	                                              SDRAMCSR_BASE)) != MAP_FAILED);
+	ES_NEW_ASRT_ERRNO((sdramcsr_base = mmap(NULL,
+	                                        SDRAMCSR_SPAN,
+	                                        PROT_READ | PROT_WRITE,
+	                                        MAP_SHARED,
+	                                        state.fd_dev_mem,
+	                                        SDRAMCSR_BASE)) != MAP_FAILED);
 	ES_FWD_INT(mu_get_udmabuf(&state.udmabuf, 0), "Failed to get udmabuf0");
 
-	{
-		*(volatile uint32_t *) (state.sdramcsr_base + MU_SDRAM_CSR_FPGAPORTRST) = 0x3FFF;
-	}
-
 	state = (struct prog_state_s){
-	    .fd_dev_mem         = state.fd_dev_mem,
-	    .virtual_base       = state.virtual_base,
-	    .udmabuf            = state.udmabuf,
-	    .fd_sdramcsr        = state.fd_sdramcsr,
-	    .sdramcsr_base      = state.sdramcsr_base,
-	    .fifo_to_copro_data = (void *) (state.virtual_base + FIFO_TO_COPRO_IN_BASE),
-	    .fifo_to_copro_csr  = (void *) (state.virtual_base + FIFO_TO_COPRO_IN_CSR_BASE),
-	    .fifo_to_hps_data   = (void *) (state.virtual_base + FIFO_TO_HPS_OUT_BASE),
-	    .fifo_to_hps_csr    = (void *) (state.virtual_base + FIFO_TO_HPS_OUT_CSR_BASE),
-	    .pio_status         = (void *) (state.virtual_base + PIO_0_BASE),
+	    .fd_dev_mem     = state.fd_dev_mem,
+	    .virtual_base   = state.virtual_base,
+	    .udmabuf        = state.udmabuf,
+	    .fifo_instr     = (void *) (state.virtual_base + FIFO_INSTR_IN_BASE),
+	    .fifo_instr_csr = (void *) (state.virtual_base + FIFO_INSTR_IN_CSR_BASE),
+	    .pio_status     = (void *) (state.virtual_base + PIO_0_BASE),
+	    .systolic_csr   = (void *) (state.virtual_base + SYSTOLIC_CORE_BASE),
+	    .read_dma =
+	        {
+	            .csr        = (void *) (state.virtual_base + MSGDMA_READ_CSR_BASE),
+	            .descriptor = (void *) (state.virtual_base + MSGDMA_READ_DESCRIPTOR_SLAVE_BASE),
+	        },
+	    .write_dma =
+	        {
+	            .csr        = (void *) (state.virtual_base + DMA_WRITE_BASE),
+	            .descriptor = (void *) (state.virtual_base + DMA_WRITE_FIFO_IN_BASE),
+	        },
 	};
-	// Test pattern
-	printf("Writing test pattern\n");
-	uint32_t sum = 0;
-	for (uint32_t i = 0; i < N_BYTES; i++) {
-		uint8_t *dst = (uint8_t *) (state.udmabuf.virtual_base + i);
-		*dst         = ((i % 16) << 4) | (i % 16);
-	}
-	for (int i = 0; i < N_BYTES / 4; i++) {
-		sum += *(uint32_t *) (state.udmabuf.virtual_base + i * 4);
-	}
-	printf("sum=%08x\n", sum);
-	printf("Done writing test pattern\n");
-	printf("Calling sync\n");
-	ES_FWD_INT_NM(mu_udmabuf_sync_for_device(&state.udmabuf, 0, state.udmabuf.size));
-	printf("Done calling sync\n");
-	printf("send_n=%u\n", *state.fifo_to_copro_csr);
-	printf("recv_n=%u\n", *state.fifo_to_hps_csr);
-	uint64_t a, b;
-	{
-		_SEND(state, 0);
-		_SEND(state, ((uint64_t) N_BYTES << 32 | state.udmabuf.phys_addr));
-		printf("Sent addr and len\n");
-		a = _RECV(state);
-		printf("Recv'd %016llx\n", a);
-		b = _RECV(state);
-		printf("Recv'd %016llx\n", b);
-		printf("checksum=0x%08x (%s)\n",
-		       (uint32_t) (b >> 32) + sum,
-		       (uint32_t) (b >> 32) + sum == 0 ? "good" : "bad");
-	}
-	printf("Done reading\n");
-	printf("send_n=%u\n", *state.fifo_to_copro_csr);
-	printf("recv_n=%u\n", *state.fifo_to_hps_csr);
 
-	double bandwidth = (95.0) * N_BYTES / ((b & 0xFFFFFFFF) - (a & 0xFFFFFFFF));
-	printf("bandwidth = %f MBps\n", bandwidth);
+	if (argc > 1) {
+		const char arg = argv[1][0];
+		if (arg == '1') {
+			print_state(&state);
+		} else if (arg == '2') {
+			matrix_t *mat_v = state.udmabuf.virtual_base;
+			printf("dst\n");
+			_print_mat(&mat_v[0], true);
+			printf("src1\n");
+			_print_mat(&mat_v[1], true);
+			printf("src2\n");
+			_print_mat(&mat_v[2], true);
+		} else if (arg == '3') {
+			printf("Write DMA CSR: \n\t0x%08x\n\t0x%08x\n\t0x%08x\n\t0x%08x\n",
+			       *(state.write_dma.csr),
+			       *(state.write_dma.csr + 1),
+			       *(state.write_dma.csr + 2),
+			       *(state.write_dma.csr + 3));
+
+		} else if (arg == '4') {
+			printf("Sending null write to DMA write\n");
+			*(state.write_dma.descriptor) = 0ull;
+		} else if (arg == '5') {
+			printf("Sending default write to DMA write\n");
+			*(state.write_dma.descriptor) = state.udmabuf.phys_addr;
+		} else if (arg == '6') {
+			memset(state.udmabuf.virtual_base, 0, sizeof(matrix_t));
+			ES_FWD_INT_NM(mu_udmabuf_sync_for_device(&state.udmabuf, 0, state.udmabuf.size));
+		} else if (arg == '7') {
+			mu_sdram_csr_print(sdramcsr_base);
+		} else if (arg == '8') {
+			ES_FWD_INT_NM(mu_udmabuf_sync_for_cpu(&state.udmabuf, 0, state.udmabuf.size));
+			matrix_t *mat_v = state.udmabuf.virtual_base;
+			_print_mat(&mat_v[0], false);
+		}
+		return 0;
+	}
+	// memset(state.udmabuf.virtual_base, 0, sizeof(matrix_t) * 3);
+	// Write two 16x16 matricies
+	{
+		matrix_t *mat = state.udmabuf.virtual_base;
+		memset(mat, 0, sizeof(matrix_t) * 3);
+		for (int i = 0; i < 16; i++) {
+			mat[2].data[i][i]            = i;  // rhs, rowmajor
+			mat[2].data[(i + 1) % 16][i] = 1;
+			mat[2].data[(i + 2) % 16][i] = 2;
+			for (int j = 0; j < 16; j++) {
+				mat[1].data[i][j] = 1;  // lhs, colmajor
+				// mat[2].data[i][j] = 1;
+			}
+		}
+		printf("Done patterning\n");
+	}
+	ES_FWD_INT_NM(mu_udmabuf_sync_for_device(&state.udmabuf, 0, state.udmabuf.size));
+	printf("Done sync1\n");
+	{
+		matrix_t *mat_v = state.udmabuf.virtual_base;
+		printf("dst\n");
+		_print_mat(&mat_v[0], true);
+		printf("src1\n");
+		_print_mat(&mat_v[1], true);
+		printf("src2\n");
+		_print_mat(&mat_v[2], true);
+
+		matrix_t *mat = (void *) state.udmabuf.phys_addr;
+		matrix_mult16(&state, &mat[0], &mat[1], &mat[2]);
+		ES_FWD_INT_NM(mu_udmabuf_sync_for_cpu(&state.udmabuf, 0, state.udmabuf.size));
+		printf("Done sync2\n");
+
+		printf("dst\n");
+		_print_mat(&mat_v[0], true);
+		printf("src1\n");
+		_print_mat(&mat_v[1], true);
+		printf("src2\n");
+		_print_mat(&mat_v[2], true);
+	}
+	printf("instr_n=%u\n", *state.fifo_instr_csr);
 	return 0;
 }
 
