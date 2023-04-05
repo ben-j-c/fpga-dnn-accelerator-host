@@ -39,8 +39,6 @@
 #define FIFO_IS_EMPTY(csr)   !!(*(csr + 1) & 0b000010)
 #define FIFO_FILL_LEVEL(csr) (*csr)
 
-STATIC_ASSERT(MSGDMA_READ_CSR_ENHANCED_FEATURES, "Require enhanced features");
-
 #pragma pack(push, 1)
 typedef struct matrix_intrinsic_s
 {
@@ -140,16 +138,10 @@ static int _send_read(struct prog_state_s *s,
 {
 	// ES_NEW_ASRT((phys_addr & 0x1F) == 0, "physical address must be 32 byte aligned");
 	// ES_NEW_ASRT((n_bytes & 0x1F) == 0, "length must be in 32 byte increments");
-	//  Use largest burst supported by the IP, else downscale by powers of 2 (only valid options)
-	uint32_t burst = 8;
-	while (burst > n_bytes) {
-		burst = burst >> 1;
-	}
 	*s->read_dma.descriptor       = phys_addr;
 	*(s->read_dma.descriptor + 2) = n_bytes;
-	*(s->read_dma.descriptor + 3) = (burst << 16);
 	// Go bit and early done enable
-	*(s->read_dma.descriptor + 7) = (1u << 31) | (1u << 24) | (channel & 0xFF);
+	*(s->read_dma.descriptor + 3) = (1u << 31) | (1u << 24) | (channel & 0xFF);
 	return 0;
 }
 
@@ -306,6 +298,7 @@ static int _pipeline(int argc, char **argv)
 		_print_mat(&mat_v[2], true);
 
 		matrix_t *mat = (void *) state.udmabuf.phys_addr;
+		printf("%08x, %08x, %08x\n", (uint32_t) &mat[0], (uint32_t) &mat[1], (uint32_t) &mat[2]);
 		matrix_mult16(&state, &mat[0], &mat[1], &mat[2]);
 		ES_FWD_INT_NM(mu_udmabuf_sync_for_cpu(&state.udmabuf, 0, state.udmabuf.size));
 		printf("Done sync2\n");
